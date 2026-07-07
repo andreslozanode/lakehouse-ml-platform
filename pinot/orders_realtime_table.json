@@ -1,0 +1,26 @@
+{
+  "tableName": "orders_enriched",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "timeColumnName": "updated_at",
+    "retentionTimeUnit": "DAYS",
+    "retentionTimeValue": "90",
+    "replication": "2"
+  },
+  "tableIndexConfig": {
+    "invertedIndexColumns": ["status", "segment", "country"],
+    "rangeIndexColumns": ["updated_at"],
+    "loadMode": "MMAP",
+    "streamConfigs": {
+      "streamType": "kafka",
+      "stream.kafka.topic.name": "gold.orders_enriched",
+      "stream.kafka.broker.list": "kafka:29092",
+      "stream.kafka.consumer.type": "lowlevel",
+      "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.stream.kafka.KafkaJSONMessageDecoder",
+      "realtime.segment.flush.threshold.rows": "500000"
+    }
+  },
+  "upsertConfig": { "mode": "FULL" },
+  "routing": { "instanceSelectorType": "strictReplicaGroup" },
+  "tenants": {}
+}

@@ -1,0 +1,23 @@
+{
+  "name": "oltp-postgres-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "cdc_user",
+    "database.password": "cdc_password",
+    "database.dbname": "oltp",
+    "topic.prefix": "oltp",
+    "plugin.name": "pgoutput",
+    "slot.name": "lakehouse_slot",
+    "publication.autocreate.mode": "filtered",
+    "table.include.list": "public.customers,public.orders",
+    "tombstones.on.delete": "false",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "connect",
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "10000",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false"
+  }
+}

@@ -1,0 +1,11 @@
+environment: qa
+paths:
+  root: ${LAKEHOUSE_ROOT:s3://lakehouse-ml-qa}
+spark:
+  shuffle_partitions: 64
+quality:
+  fail_threshold_pct: 2.0
+ml:
+  mlflow:
+    tracking_uri: ${MLFLOW_TRACKING_URI:databricks}
+    registry_uri: ${MLFLOW_REGISTRY_URI:databricks}

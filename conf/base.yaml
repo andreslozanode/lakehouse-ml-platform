@@ -1,0 +1,94 @@
+# Base configuration shared by all environments. Env files (dev/qa/prod) overlay this.
+# ${VAR:default} placeholders are resolved from environment variables at load time.
+
+project: lakehouse-ml-platform
+
+paths:
+  root: ${LAKEHOUSE_ROOT:./data}
+  landing: ${LAKEHOUSE_ROOT:./data}/landing
+  bronze: ${LAKEHOUSE_ROOT:./data}/bronze
+  silver: ${LAKEHOUSE_ROOT:./data}/silver
+  gold: ${LAKEHOUSE_ROOT:./data}/gold
+  checkpoints: ${LAKEHOUSE_ROOT:./data}/_checkpoints
+  meta: ${LAKEHOUSE_ROOT:./data}/_meta
+
+catalog:
+  # Unity Catalog three-level namespace when running on Databricks;
+  # local runs fall back to path-based Delta tables.
+  name: lakehouse
+  bronze_schema: bronze
+  silver_schema: silver
+  gold_schema: gold
+
+sources:
+  kaggle:
+    # Amazon Fine Food Reviews - ~568k text reviews with 1-5 scores.
+    dataset: snap/amazon-fine-food-reviews
+    files: ["Reviews.csv"]
+  reddit:
+    subreddits: ["dataengineering", "MachineLearning", "learnmachinelearning"]
+    listing: new
+    pages_per_subreddit: 4
+    page_size: 100
+    user_agent: ${REDDIT_USER_AGENT:lakehouse-ml-platform/1.0}
+
+cdc:
+  kafka_bootstrap: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  topic_prefix: oltp
+  tables: ["public.customers", "public.orders"]
+  postgres:
+    host: ${CDC_POSTGRES_HOST:localhost}
+    port: ${CDC_POSTGRES_PORT:5432}
+    database: ${CDC_POSTGRES_DB:oltp}
+    user: ${CDC_POSTGRES_USER:cdc_user}
+    password: ${CDC_POSTGRES_PASSWORD:}
+  batch:
+    watermark_column: updated_at
+    merge_keys:
+      customers: ["customer_id"]
+      orders: ["order_id"]
+
+quality:
+  fail_threshold_pct: 5.0   # abort the run if >5% rows violate a FAIL rule
+
+ml:
+  mlflow:
+    # dev default: local tracking server from docker-compose; falls back to file store.
+    # qa/prod overlays point to Databricks-managed MLflow.
+    tracking_uri: ${MLFLOW_TRACKING_URI:file:./mlruns}
+    registry_uri: ${MLFLOW_REGISTRY_URI:}
+    experiment: /lakehouse/text-classification
+    registered_models:
+      classical: lakehouse-sentiment-classical
+      bert: lakehouse-sentiment-bert
+      tensorflow: lakehouse-sentiment-tf
+  label_col: label
+  text_col: text
+  test_size: 0.2
+  val_size: 0.1
+  random_state: 42
+  sample_rows: 40000          # cap for classical models / local iterations
+  bert:
+    model_name: distilbert-base-uncased
+    max_length: 128
+    batch_size: 32
+    epochs: 3
+    lr: 2.0e-5
+    warmup_ratio: 0.1
+    patience: 2
+
+delivery:
+  snowflake:
+    account: ${SNOWFLAKE_ACCOUNT:}
+    user: ${SNOWFLAKE_USER:}
+    password: ${SNOWFLAKE_PASSWORD:}
+    role: ${SNOWFLAKE_ROLE:LAKEHOUSE_LOADER}
+    warehouse: ${SNOWFLAKE_WAREHOUSE:LOAD_WH}
+    database: ${SNOWFLAKE_DATABASE:LAKEHOUSE}
+    schema: ${SNOWFLAKE_SCHEMA:GOLD}
+    tables: ["gold_reviews_daily", "gold_subreddit_engagement", "gold_orders_enriched"]
+
+spark:
+  app_name: lakehouse-ml-platform
+  shuffle_partitions: 8
+  extra_conf: {}

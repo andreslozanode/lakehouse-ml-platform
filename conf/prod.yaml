@@ -1,0 +1,14 @@
+environment: prod
+paths:
+  root: ${LAKEHOUSE_ROOT:s3://lakehouse-ml-prod}
+spark:
+  shuffle_partitions: 200
+quality:
+  fail_threshold_pct: 1.0
+ml:
+  mlflow:
+    tracking_uri: ${MLFLOW_TRACKING_URI:databricks}
+    registry_uri: ${MLFLOW_REGISTRY_URI:databricks}
+  sample_rows: 0        # 0 = no sampling in prod
+  bert:
+    epochs: 3

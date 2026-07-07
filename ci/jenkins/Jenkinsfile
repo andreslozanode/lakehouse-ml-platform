@@ -1,0 +1,79 @@
+// Declarative pipeline mirroring the GitHub Actions flow for teams on Jenkins.
+pipeline {
+    agent { docker { image 'python:3.11-slim' } }
+
+    parameters {
+        choice(name: 'DEPLOY_ENV', choices: ['none', 'dev', 'qa', 'prod'],
+               description: 'Target environment (none = CI only)')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+        timeout(time: 90, unit: 'MINUTES')
+    }
+
+    environment {
+        PIP_CACHE_DIR = "${WORKSPACE}/.pip-cache"
+    }
+
+    stages {
+        stage('Install') {
+            steps { sh 'pip install -e ".[dev,spark]"' }
+        }
+        stage('Lint & Typecheck') {
+            parallel {
+                stage('Ruff')  { steps { sh 'ruff check src tests' } }
+                stage('Black') { steps { sh 'black --check src tests' } }
+                stage('Mypy')  { steps { sh 'mypy src' } }
+            }
+        }
+        stage('Test') {
+            steps { sh 'pytest --junitxml=reports/junit.xml --cov-report=xml' }
+            post { always { junit allowEmptyResults: true, testResults: 'reports/junit.xml' } }
+        }
+        stage('Build wheel') {
+            steps {
+                sh 'pip install build && python -m build --wheel'
+                archiveArtifacts artifacts: 'dist/*.whl', fingerprint: true
+            }
+        }
+        stage('Approval (prod)') {
+            when { expression { params.DEPLOY_ENV == 'prod' } }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'Deploy to PRODUCTION?', submitter: 'release-managers'
+                }
+            }
+        }
+        stage('Deploy') {
+            when { expression { params.DEPLOY_ENV != 'none' } }
+            steps {
+                withCredentials([
+                    string(credentialsId: "databricks-token-${params.DEPLOY_ENV}", variable: 'DATABRICKS_TOKEN'),
+                    string(credentialsId: "databricks-host-${params.DEPLOY_ENV}", variable: 'DATABRICKS_HOST')
+                ]) {
+                    sh '''
+                        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+                        databricks bundle deploy -t ${DEPLOY_ENV}
+                    '''
+                }
+                dir('infra/terraform') {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                                      credentialsId: "aws-${params.DEPLOY_ENV}"]]) {
+                        sh '''
+                            terraform init -backend-config="envs/${DEPLOY_ENV}.backend.hcl"
+                            terraform apply -auto-approve -var-file="envs/${DEPLOY_ENV}.tfvars"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        failure { echo "Build failed on ${env.BRANCH_NAME} (env=${params.DEPLOY_ENV})." }
+        success { echo "Pipeline OK (env=${params.DEPLOY_ENV})." }
+    }
+}

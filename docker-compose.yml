@@ -1,0 +1,116 @@
+# Local stack: Postgres (OLTP source + MLflow backend) -> Debezium -> Kafka (KRaft) + MLflow Tracking Server
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: oltp-postgres
+    environment:
+      POSTGRES_DB: oltp
+      POSTGRES_USER: cdc_user
+      POSTGRES_PASSWORD: cdc_password
+    command: >
+      postgres -c wal_level=logical
+               -c max_wal_senders=10
+               -c max_replication_slots=10
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./cdc/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cdc_user -d oltp"]
+      interval: 5s
+      retries: 12
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "lakehouse-ml-platform-01"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:29092 >/dev/null 2>&1"]
+      interval: 10s
+      retries: 12
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    container_name: mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      bash -c "pip install --quiet psycopg2-binary &&
+               mlflow server
+               --host 0.0.0.0 --port 5000
+               --backend-store-uri postgresql+psycopg2://cdc_user:cdc_password@postgres:5432/mlflow
+               --artifacts-destination /mlflow/artifacts
+               --serve-artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request as u; u.urlopen(\"http://localhost:5000/health\")'"]
+      interval: 10s
+      retries: 12
+
+  connect:
+    image: quay.io/debezium/connect:2.7
+    container_name: debezium-connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: cdc-connect
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_status
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    ports:
+      - "8083:8083"
+
+volumes:
+  mlflow-artifacts:
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    container_name: mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      bash -c "pip install --quiet psycopg2-binary &&
+               mlflow server
+               --backend-store-uri postgresql://cdc_user:cdc_password@postgres:5432/mlflow
+               --artifacts-destination /mlartifacts
+               --serve-artifacts
+               --host 0.0.0.0 --port 5000"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-artifacts:/mlartifacts
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://localhost:5000/health')\""]
+      interval: 10s
+      retries: 12
+
+volumes:
+  mlflow-artifacts:

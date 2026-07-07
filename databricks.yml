@@ -1,0 +1,112 @@
+# Databricks Asset Bundle: deploys the same package as three isolated targets.
+bundle:
+  name: lakehouse-ml-platform
+
+artifacts:
+  wheel:
+    type: whl
+    build: python -m pip wheel . -w dist --no-deps
+    path: .
+
+variables:
+  node_type:
+    default: Standard_DS3_v2
+  spark_version:
+    default: 15.4.x-scala2.12
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: ${var.databricks_host_dev}
+  qa:
+    mode: production
+    workspace:
+      host: ${var.databricks_host_qa}
+      root_path: /Shared/.bundle/qa/${bundle.name}
+  prod:
+    mode: production
+    workspace:
+      host: ${var.databricks_host_prod}
+      root_path: /Shared/.bundle/prod/${bundle.name}
+    run_as:
+      service_principal_name: ${var.prod_service_principal}
+    resources:
+      jobs:
+        medallion_job:
+          schedule:
+            pause_status: UNPAUSED
+        cdc_stream_job:
+          continuous:
+            pause_status: UNPAUSED
+        ml_training_job:
+          schedule:
+            pause_status: UNPAUSED
+
+resources:
+  jobs:
+    medallion_job:
+      name: "[${bundle.target}] medallion-daily"
+      schedule:
+        quartz_cron_expression: "0 0 5 * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED
+      job_clusters:
+        - job_cluster_key: etl
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+      tasks:
+        - task_key: bronze
+          job_cluster_key: etl
+          python_wheel_task: { package_name: lakehouse-ml-platform, entry_point: lakehouse, parameters: ["bronze"] }
+          libraries: [{ whl: dist/*.whl }]
+        - task_key: silver
+          depends_on: [{ task_key: bronze }]
+          job_cluster_key: etl
+          python_wheel_task: { package_name: lakehouse-ml-platform, entry_point: lakehouse, parameters: ["silver"] }
+          libraries: [{ whl: dist/*.whl }]
+        - task_key: gold
+          depends_on: [{ task_key: silver }]
+          job_cluster_key: etl
+          python_wheel_task: { package_name: lakehouse-ml-platform, entry_point: lakehouse, parameters: ["gold"] }
+          libraries: [{ whl: dist/*.whl }]
+
+    cdc_stream_job:
+      name: "[${bundle.target}] cdc-streaming"
+      continuous:
+        pause_status: PAUSED
+      tasks:
+        - task_key: stream
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 1
+          python_wheel_task: { package_name: lakehouse-ml-platform, entry_point: lakehouse, parameters: ["cdc-stream"] }
+          libraries: [{ whl: dist/*.whl }]
+
+    ml_training_job:
+      name: "[${bundle.target}] ml-weekly-training"
+      schedule:
+        quartz_cron_expression: "0 0 3 ? * SUN"
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: train_classical
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 1
+          spark_python_task: { python_file: src/lakehouse/ml/train_classical.py }
+          libraries: [{ whl: dist/*.whl }]
+        - task_key: train_bert
+          depends_on: [{ task_key: train_classical }]
+          new_cluster:
+            spark_version: 15.4.x-gpu-ml-scala2.12
+            node_type_id: Standard_NC6s_v3
+            num_workers: 0
+          spark_python_task: { python_file: src/lakehouse/ml/train_bert_torch.py }
+          libraries: [{ whl: dist/*.whl }]

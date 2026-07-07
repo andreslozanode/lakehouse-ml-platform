@@ -1,0 +1,11 @@
+environment: dev
+paths:
+  root: ${LAKEHOUSE_ROOT:./data}
+spark:
+  shuffle_partitions: 8
+ml:
+  mlflow:
+    tracking_uri: ${MLFLOW_TRACKING_URI:http://localhost:5000}
+  sample_rows: 20000
+  bert:
+    epochs: 1

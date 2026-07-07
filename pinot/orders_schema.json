@@ -1,0 +1,22 @@
+{
+  "schemaName": "orders_enriched",
+  "dimensionFieldSpecs": [
+    { "name": "order_id", "dataType": "LONG" },
+    { "name": "customer_id", "dataType": "LONG" },
+    { "name": "segment", "dataType": "STRING" },
+    { "name": "country", "dataType": "STRING" },
+    { "name": "status", "dataType": "STRING" }
+  ],
+  "metricFieldSpecs": [
+    { "name": "amount", "dataType": "DOUBLE" }
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "updated_at",
+      "dataType": "TIMESTAMP",
+      "format": "1:MILLISECONDS:TIMESTAMP",
+      "granularity": "1:MILLISECONDS"
+    }
+  ],
+  "primaryKeyColumns": ["order_id"]
+}
